@@ -7,6 +7,8 @@ import com.uber.m3.tally.StatsReporter;
 import com.uber.m3.util.Duration;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Tag;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -16,10 +18,23 @@ import org.slf4j.LoggerFactory;
 public class CadenceClientStatsReporter implements StatsReporter {
 
   private static final Logger log = LoggerFactory.getLogger(CadenceClientStatsReporter.class);
-  private final CadenceClientStatsReporterConfig config;
+  private final List<String> metrics;
 
-  public CadenceClientStatsReporter(CadenceClientStatsReporterConfig config) {
-    this.config = config;
+  public CadenceClientStatsReporter() {
+    this.metrics = Arrays.asList(
+        "cadence-workflow-endtoend-latency",
+        "cadence-decision-execution-latency",
+        "cadence-decision-response-latency",
+        "cadence-workflow-start",
+        "cadence-workflow-completed",
+        "cadence-workflow-canceled",
+        "cadence-workflow-failed",
+        "cadence-workflow-continue-as-new"
+    );
+  }
+
+  public CadenceClientStatsReporter(List<String> metrics) {
+    this.metrics = metrics;
   }
 
   @Override
@@ -71,8 +86,7 @@ public class CadenceClientStatsReporter implements StatsReporter {
   }
 
   private boolean shouldReport(String name) {
-    return config.getMetrics()
-        .stream()
+    return metrics.stream()
         .anyMatch(name::equals);
   }
 

@@ -61,14 +61,24 @@ public class CadenceClientStatsReporter implements StatsReporter {
   }
 
   @Override
-  public void reportHistogramValueSamples(String name, Map<String, String> tags, Buckets buckets,
-      double bucketLowerBound, double bucketUpperBound, long samples) {
+  public void reportHistogramValueSamples(
+      String name,
+      Map<String, String> tags,
+      Buckets buckets,
+      double bucketLowerBound,
+      double bucketUpperBound,
+      long samples) {
     // NOOP
   }
 
   @Override
-  public void reportHistogramDurationSamples(String name, Map<String, String> tags, Buckets buckets,
-      Duration bucketLowerBound, Duration bucketUpperBound, long samples) {
+  public void reportHistogramDurationSamples(
+      String name,
+      Map<String, String> tags,
+      Buckets buckets,
+      Duration bucketLowerBound,
+      Duration bucketUpperBound,
+      long samples) {
     // NOOP
   }
 
@@ -78,5 +88,4 @@ public class CadenceClientStatsReporter implements StatsReporter {
         .map(entry -> Tag.of(entry.getKey(), entry.getValue()))
         .collect(Collectors.toList());
   }
-
 }

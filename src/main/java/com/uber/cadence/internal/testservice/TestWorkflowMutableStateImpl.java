@@ -347,6 +347,9 @@ class TestWorkflowMutableStateImpl implements TestWorkflowMutableState {
         processRequestCancelExternalWorkflowExecution(
             ctx, d.getRequestCancelExternalWorkflowExecutionDecisionAttributes());
         break;
+      case UpsertWorkflowSearchAttributes:
+        // TODO: https://github.com/uber/cadence-java-client/issues/360
+        break;
     }
   }
 
@@ -1387,6 +1390,20 @@ class TestWorkflowMutableStateImpl implements TestWorkflowMutableState {
   @Override
   public QueryWorkflowResponse query(QueryWorkflowRequest queryRequest) throws TException {
     QueryId queryId = new QueryId(executionId);
+
+    Optional<WorkflowExecutionCloseStatus> optCloseStatus = getCloseStatus();
+    if (optCloseStatus.isPresent() && queryRequest.getQueryRejectCondition() != null) {
+      WorkflowExecutionCloseStatus closeStatus = optCloseStatus.get();
+      boolean rejectNotOpen =
+          queryRequest.getQueryRejectCondition() == QueryRejectCondition.NOT_OPEN;
+      boolean rejectNotCompletedCleanly =
+          queryRequest.getQueryRejectCondition() == QueryRejectCondition.NOT_COMPLETED_CLEANLY
+              && closeStatus != WorkflowExecutionCloseStatus.COMPLETED;
+      if (rejectNotOpen || rejectNotCompletedCleanly) {
+        return new QueryWorkflowResponse()
+            .setQueryRejected(new QueryRejected().setCloseStatus(closeStatus));
+      }
+    }
 
     PollForDecisionTaskResponse task =
         new PollForDecisionTaskResponse()

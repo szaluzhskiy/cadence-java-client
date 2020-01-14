@@ -15,27 +15,11 @@
  *  permissions and limitations under the License.
  */
 
-package com.uber.cadence.workflow;
+package com.uber.cadence.internal.sync;
 
-import com.uber.cadence.ChildPolicy;
-import com.uber.cadence.SearchAttributes;
-import java.time.Duration;
+public class WorkflowRejectedExecutionError extends Error {
 
-public interface WorkflowInfo {
-
-  String getDomain();
-
-  String getWorkflowId();
-
-  String getRunId();
-
-  String getWorkflowType();
-
-  String getTaskList();
-
-  Duration getExecutionStartToCloseTimeout();
-
-  ChildPolicy getChildPolicy();
-
-  SearchAttributes getSearchAttributes();
+  WorkflowRejectedExecutionError(Throwable cause) {
+    super(cause);
+  }
 }

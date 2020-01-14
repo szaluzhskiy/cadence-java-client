@@ -30,9 +30,12 @@ import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.uber.cadence.GetWorkflowExecutionHistoryResponse;
 import com.uber.cadence.HistoryEvent;
 import com.uber.cadence.Memo;
+import com.uber.cadence.QueryRejectCondition;
+import com.uber.cadence.SearchAttributes;
 import com.uber.cadence.SignalExternalWorkflowExecutionFailedCause;
 import com.uber.cadence.TimeoutType;
 import com.uber.cadence.WorkflowExecution;
+import com.uber.cadence.WorkflowExecutionCloseStatus;
 import com.uber.cadence.WorkflowIdReusePolicy;
 import com.uber.cadence.activity.Activity;
 import com.uber.cadence.activity.ActivityMethod;
@@ -56,6 +59,7 @@ import com.uber.cadence.common.CronSchedule;
 import com.uber.cadence.common.MethodRetry;
 import com.uber.cadence.common.RetryOptions;
 import com.uber.cadence.converter.JsonDataConverter;
+import com.uber.cadence.internal.common.QueryResponse;
 import com.uber.cadence.internal.common.WorkflowExecutionUtils;
 import com.uber.cadence.internal.sync.DeterministicRunnerTest;
 import com.uber.cadence.internal.worker.PollerOptions;
@@ -74,9 +78,11 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
 import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1390,6 +1396,74 @@ public class WorkflowTest {
   }
 
   @Test
+  public void testSearchAttributes() {
+    if (testEnvironment != null) {
+      String testKeyString = "CustomKeywordField";
+      String testValueString = "testKeyword";
+      String testKeyInteger = "CustomIntField";
+      Integer testValueInteger = 1;
+      String testKeyDateTime = "CustomDateTimeField";
+      LocalDateTime testValueDateTime = LocalDateTime.now();
+      String testKeyBool = "CustomBoolField";
+      Boolean testValueBool = true;
+      String testKeyDouble = "CustomDoubleField";
+      Double testValueDouble = 1.23;
+
+      // add more type to test
+      Map<String, Object> searchAttr = new HashMap<>();
+      searchAttr.put(testKeyString, testValueString);
+      searchAttr.put(testKeyInteger, testValueInteger);
+      searchAttr.put(testKeyDateTime, testValueDateTime);
+      searchAttr.put(testKeyBool, testValueBool);
+      searchAttr.put(testKeyDouble, testValueDouble);
+
+      startWorkerFor(TestMultiargsWorkflowsImpl.class);
+      WorkflowOptions workflowOptions =
+          newWorkflowOptionsBuilder(taskList).setSearchAttributes(searchAttr).build();
+      TestMultiargsWorkflowsFunc stubF =
+          workflowClient.newWorkflowStub(TestMultiargsWorkflowsFunc.class, workflowOptions);
+      WorkflowExecution executionF = WorkflowClient.start(stubF::func);
+
+      GetWorkflowExecutionHistoryResponse historyResp =
+          WorkflowExecutionUtils.getHistoryPage(
+              new byte[] {}, testEnvironment.getWorkflowService(), DOMAIN, executionF);
+      HistoryEvent startEvent = historyResp.history.getEvents().get(0);
+      SearchAttributes searchAttrFromEvent =
+          startEvent.workflowExecutionStartedEventAttributes.getSearchAttributes();
+
+      byte[] searchAttrStringBytes =
+          searchAttrFromEvent.getIndexedFields().get(testKeyString).array();
+      String retrievedString =
+          JsonDataConverter.getInstance()
+              .fromData(searchAttrStringBytes, String.class, String.class);
+      assertEquals(testValueString, retrievedString);
+      byte[] searchAttrIntegerBytes =
+          searchAttrFromEvent.getIndexedFields().get(testKeyInteger).array();
+      Integer retrievedInteger =
+          JsonDataConverter.getInstance()
+              .fromData(searchAttrIntegerBytes, Integer.class, Integer.class);
+      assertEquals(testValueInteger, retrievedInteger);
+      byte[] searchAttrDateTimeBytes =
+          searchAttrFromEvent.getIndexedFields().get(testKeyDateTime).array();
+      LocalDateTime retrievedDateTime =
+          JsonDataConverter.getInstance()
+              .fromData(searchAttrDateTimeBytes, LocalDateTime.class, LocalDateTime.class);
+      assertEquals(testValueDateTime, retrievedDateTime);
+      byte[] searchAttrBoolBytes = searchAttrFromEvent.getIndexedFields().get(testKeyBool).array();
+      Boolean retrievedBool =
+          JsonDataConverter.getInstance()
+              .fromData(searchAttrBoolBytes, Boolean.class, Boolean.class);
+      assertEquals(testValueBool, retrievedBool);
+      byte[] searchAttrDoubleBytes =
+          searchAttrFromEvent.getIndexedFields().get(testKeyDouble).array();
+      Double retrievedDouble =
+          JsonDataConverter.getInstance()
+              .fromData(searchAttrDoubleBytes, Double.class, Double.class);
+      assertEquals(testValueDouble, retrievedDouble);
+    }
+  }
+
+  @Test
   public void testExecute() throws ExecutionException, InterruptedException {
     startWorkerFor(TestMultiargsWorkflowsImpl.class);
     WorkflowOptions workflowOptions = newWorkflowOptionsBuilder(taskList).build();
@@ -2382,6 +2456,12 @@ public class WorkflowTest {
         });
     execution.set(client.start());
     assertEquals("Hello World!", client.getResult(String.class));
+    assertEquals("World!", client.query("QueryableWorkflow::getState", String.class));
+    QueryResponse<String> queryResponse =
+        client.query("QueryableWorkflow::getState", String.class, QueryRejectCondition.NOT_OPEN);
+    assertNull(queryResponse.getResult());
+    assertEquals(
+        WorkflowExecutionCloseStatus.COMPLETED, queryResponse.getQueryRejected().closeStatus);
   }
 
   static final AtomicInteger decisionCount = new AtomicInteger();
@@ -2477,7 +2557,7 @@ public class WorkflowTest {
   public interface ITestChild {
 
     @WorkflowMethod
-    String execute(String arg);
+    String execute(String arg, int delay);
   }
 
   public interface ITestNamedChild {
@@ -2501,17 +2581,39 @@ public class WorkflowTest {
 
     @Override
     public String execute(String taskList) {
-      Promise<String> r1 = Async.function(child1::execute, "Hello ");
+      Promise<String> r1 = Async.function(child1::execute, "Hello ", 0);
       String r2 = child2.execute("World!");
       assertEquals(child2Id, Workflow.getWorkflowExecution(child2).get().getWorkflowId());
       return r1.get() + r2;
     }
   }
 
+  public static class TestParentWorkflowWithChildTimeout implements TestWorkflow1 {
+
+    private final ITestChild child;
+
+    public TestParentWorkflowWithChildTimeout() {
+      ChildWorkflowOptions.Builder options = new ChildWorkflowOptions.Builder();
+      options.setExecutionStartToCloseTimeout(Duration.ofSeconds(1));
+      child = Workflow.newChildWorkflowStub(ITestChild.class, options.build());
+    }
+
+    @Override
+    public String execute(String taskList) {
+      try {
+        child.execute("Hello ", (int) Duration.ofDays(1).toMillis());
+      } catch (Exception e) {
+        return e.getClass().getSimpleName();
+      }
+      throw new RuntimeException("not reachable");
+    }
+  }
+
   public static class TestChild implements ITestChild {
 
     @Override
-    public String execute(String arg) {
+    public String execute(String arg, int delay) {
+      Workflow.sleep(delay);
       return arg.toUpperCase();
     }
   }
@@ -2535,6 +2637,19 @@ public class WorkflowTest {
     options.setTaskList(taskList);
     TestWorkflow1 client = workflowClient.newWorkflowStub(TestWorkflow1.class, options.build());
     assertEquals("HELLO WORLD!", client.execute(taskList));
+  }
+
+  @Test
+  public void testChildWorkflowTimeout() {
+    child2Id = UUID.randomUUID().toString();
+    startWorkerFor(TestParentWorkflowWithChildTimeout.class, TestChild.class);
+
+    WorkflowOptions.Builder options = new WorkflowOptions.Builder();
+    options.setExecutionStartToCloseTimeout(Duration.ofSeconds(200));
+    options.setTaskStartToCloseTimeout(Duration.ofSeconds(60));
+    options.setTaskList(taskList);
+    TestWorkflow1 client = workflowClient.newWorkflowStub(TestWorkflow1.class, options.build());
+    assertEquals("ChildWorkflowTimedOutException", client.execute(taskList));
   }
 
   private static String childReexecuteId = UUID.randomUUID().toString();
@@ -2646,7 +2761,7 @@ public class WorkflowTest {
               .build();
       child = Workflow.newChildWorkflowStub(ITestChild.class, options);
 
-      return child.execute(taskList);
+      return child.execute(taskList, 0);
     }
   }
 
@@ -2673,7 +2788,7 @@ public class WorkflowTest {
   public static class AngryChild implements ITestChild {
 
     @Override
-    public String execute(String taskList) {
+    public String execute(String taskList, int delay) {
       AngryChildActivity activity =
           Workflow.newActivityStub(
               AngryChildActivity.class,
@@ -2927,7 +3042,7 @@ public class WorkflowTest {
                       .build())
               .build();
       child = Workflow.newChildWorkflowStub(ITestChild.class, options);
-      return Async.function(child::execute, taskList).get();
+      return Async.function(child::execute, taskList, 0).get();
     }
   }
 
@@ -4106,7 +4221,7 @@ public class WorkflowTest {
     startWorkerFor(DeterminismFailingWorkflowImpl.class);
     WorkflowOptions options =
         new WorkflowOptions.Builder()
-            .setExecutionStartToCloseTimeout(Duration.ofSeconds(1))
+            .setExecutionStartToCloseTimeout(Duration.ofSeconds(10))
             .setTaskStartToCloseTimeout(Duration.ofSeconds(1))
             .setTaskList(taskList)
             .build();
@@ -4118,6 +4233,16 @@ public class WorkflowTest {
     } catch (WorkflowTimedOutException e) {
       // expected to timeout as workflow is going get blocked.
     }
+
+    int workflowRootThreads = 0;
+    ThreadInfo[] threads = ManagementFactory.getThreadMXBean().dumpAllThreads(false, false);
+    for (ThreadInfo thread : threads) {
+      if (thread.getThreadName().contains("workflow-root")) {
+        workflowRootThreads++;
+      }
+    }
+
+    assertTrue("workflow threads might leak", workflowRootThreads < 10);
   }
 
   @Test
@@ -4364,6 +4489,61 @@ public class WorkflowTest {
 
     String result = workflowStub.execute(taskList);
     assertTrue(result.contains("NonSerializableException"));
+  }
+
+  public interface NonDeserializableArgumentsActivity {
+
+    @ActivityMethod(scheduleToCloseTimeoutSeconds = 5)
+    void execute(int arg);
+  }
+
+  public static class NonDeserializableExceptionActivityImpl
+      implements NonDeserializableArgumentsActivity {
+
+    @Override
+    public void execute(int arg) {}
+  }
+
+  public static class TestNonSerializableArgumentsInActivityWorkflow implements TestWorkflow1 {
+
+    @Override
+    public String execute(String taskList) {
+      StringBuilder result = new StringBuilder();
+      ActivityStub activity =
+          Workflow.newUntypedActivityStub(
+              new ActivityOptions.Builder()
+                  .setScheduleToCloseTimeout(Duration.ofSeconds(5))
+                  .build());
+      ActivityStub localActivity =
+          Workflow.newUntypedLocalActivityStub(
+              new LocalActivityOptions.Builder()
+                  .setScheduleToCloseTimeout(Duration.ofSeconds(5))
+                  .build());
+      try {
+        activity.execute("NonDeserializableArgumentsActivity::execute", Void.class, "boo");
+      } catch (ActivityFailureException e) {
+        result.append(e.getCause().getClass().getSimpleName());
+      }
+      result.append("-");
+      try {
+        localActivity.execute("NonDeserializableArgumentsActivity::execute", Void.class, "boo");
+      } catch (ActivityFailureException e) {
+        result.append(e.getCause().getClass().getSimpleName());
+      }
+      return result.toString();
+    }
+  }
+
+  @Test
+  public void testNonSerializableArgumentsInActivity() {
+    worker.registerActivitiesImplementations(new NonDeserializableExceptionActivityImpl());
+    startWorkerFor(TestNonSerializableArgumentsInActivityWorkflow.class);
+    TestWorkflow1 workflowStub =
+        workflowClient.newWorkflowStub(
+            TestWorkflow1.class, newWorkflowOptionsBuilder(taskList).build());
+
+    String result = workflowStub.execute(taskList);
+    assertEquals("DataConverterException-DataConverterException", result);
   }
 
   public interface NonSerializableExceptionChildWorkflow {
@@ -5014,6 +5194,100 @@ public class WorkflowTest {
     assertTrue(tracer.getTrace().contains("executeActivity TestActivities::activity2"));
   }
 
+  public static class TestSignalExceptionWorkflowImpl implements TestWorkflowSignaled {
+    private boolean signaled = false;
+
+    @Override
+    public String execute() {
+      Workflow.await(() -> signaled);
+      return null;
+    }
+
+    @Override
+    public void signal1(String arg) {
+      for (int i = 0; i < 100; i++) {
+        Async.procedure(() -> System.out.println("test"));
+      }
+
+      throw new RuntimeException("exception in signal method");
+    }
+  }
+
+  @Test
+  public void testExceptionInSignal() throws InterruptedException {
+    startWorkerFor(TestSignalExceptionWorkflowImpl.class);
+    TestWorkflowSignaled signalWorkflow =
+        workflowClient.newWorkflowStub(
+            TestWorkflowSignaled.class, newWorkflowOptionsBuilder(taskList).build());
+    CompletableFuture<String> result = WorkflowClient.execute(signalWorkflow::execute);
+    signalWorkflow.signal1("test");
+    try {
+      result.get(1, TimeUnit.SECONDS);
+      fail("not reachable");
+    } catch (Exception e) {
+      // exception expected here.
+    }
+
+    // Suspend polling so that decision tasks are not retried. Otherwise it will affect our thread
+    // count.
+    if (useExternalService) {
+      workerFactory.suspendPolling();
+    } else {
+      testEnvironment.getWorkerFactory().suspendPolling();
+    }
+
+    // Wait for decision task retry to finish.
+    Thread.sleep(10000);
+
+    int workflowThreads = 0;
+    ThreadInfo[] threads = ManagementFactory.getThreadMXBean().dumpAllThreads(false, false);
+    for (ThreadInfo thread : threads) {
+      if (thread.getThreadName().startsWith("workflow")) {
+        workflowThreads++;
+      }
+    }
+
+    assertTrue(
+        "workflow threads might leak, #workflowThreads = " + workflowThreads, workflowThreads < 20);
+  }
+
+  public interface TestUpsertSearchAttributes {
+    @WorkflowMethod
+    String execute(String keyword);
+  }
+
+  public static class TestUpsertSearchAttributesImpl implements TestUpsertSearchAttributes {
+
+    @Override
+    public String execute(String keyword) {
+      SearchAttributes searchAttributes = Workflow.getWorkflowInfo().getSearchAttributes();
+      assertNull(searchAttributes);
+
+      Map<String, Object> searchAttrMap = new HashMap<>();
+      searchAttrMap.put("CustomKeywordField", keyword);
+      Workflow.upsertSearchAttributes(searchAttrMap);
+
+      searchAttributes = Workflow.getWorkflowInfo().getSearchAttributes();
+      assertEquals(
+          "testKey",
+          WorkflowUtils.getValueFromSearchAttributes(
+              searchAttributes, "CustomKeywordField", String.class));
+
+      return "done";
+    }
+  }
+
+  @Test
+  public void testUpsertSearchAttributes() {
+    startWorkerFor(TestUpsertSearchAttributesImpl.class);
+    TestUpsertSearchAttributes testWorkflow =
+        workflowClient.newWorkflowStub(
+            TestUpsertSearchAttributes.class, newWorkflowOptionsBuilder(taskList).build());
+    String result = testWorkflow.execute("testKey");
+    assertEquals("done", result);
+    tracer.setExpected("upsertSearchAttributes");
+  }
+
   private static class TracingWorkflowInterceptor implements WorkflowInterceptor {
 
     private final FilteredTrace trace;
@@ -5136,6 +5410,12 @@ public class WorkflowTest {
     public UUID randomUUID() {
       trace.add("randomUUID");
       return next.randomUUID();
+    }
+
+    @Override
+    public void upsertSearchAttributes(Map<String, Object> searchAttributes) {
+      trace.add("upsertSearchAttributes");
+      next.upsertSearchAttributes(searchAttributes);
     }
   }
 }

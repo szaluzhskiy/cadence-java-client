@@ -643,7 +643,7 @@ public class WorkflowExecutionUtils {
    *
    * @param showWorkflowTasks when set to false workflow task events (decider events) are not
    *     included
-   * @history Workflow instance history
+   * @param history Workflow instance history
    */
   public static String prettyPrintHistory(History history, boolean showWorkflowTasks) {
     return prettyPrintHistory(history.getEvents().iterator(), showWorkflowTasks);
@@ -927,9 +927,8 @@ public class WorkflowExecutionUtils {
    * serialized exceptions.
    */
   private static String prettyPrintJson(String jsonValue, String stackIndentation) {
-    JsonParser parser = new JsonParser();
     try {
-      JsonObject json = parser.parse(jsonValue).getAsJsonObject();
+      JsonObject json = JsonParser.parseString(jsonValue).getAsJsonObject();
       fixStackTrace(json, stackIndentation);
       Gson gson = new GsonBuilder().setPrettyPrinting().create();
       return gson.toJson(json);
@@ -972,7 +971,8 @@ public class WorkflowExecutionUtils {
                 || eventType == EventType.CancelTimerFailed
                 || eventType == EventType.RequestCancelExternalWorkflowExecutionInitiated
                 || eventType == EventType.MarkerRecorded
-                || eventType == EventType.SignalExternalWorkflowExecutionInitiated));
+                || eventType == EventType.SignalExternalWorkflowExecutionInitiated
+                || eventType == EventType.UpsertWorkflowSearchAttributes));
     return result;
   }
 
@@ -1002,6 +1002,8 @@ public class WorkflowExecutionUtils {
         return EventType.StartChildWorkflowExecutionInitiated;
       case SignalExternalWorkflowExecution:
         return EventType.SignalExternalWorkflowExecutionInitiated;
+      case UpsertWorkflowSearchAttributes:
+        return EventType.UpsertWorkflowSearchAttributes;
     }
     throw new IllegalArgumentException("Unknown decisionType");
   }

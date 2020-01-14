@@ -15,27 +15,24 @@
  *  permissions and limitations under the License.
  */
 
-package com.uber.cadence.workflow;
+package com.uber.cadence.internal.replay;
 
-import com.uber.cadence.ChildPolicy;
-import com.uber.cadence.SearchAttributes;
-import java.time.Duration;
+import com.uber.cadence.Decision;
 
-public interface WorkflowInfo {
+public class UpsertSearchAttributesDecisionStateMachine extends DecisionStateMachineBase {
 
-  String getDomain();
+  private final Decision decision;
 
-  String getWorkflowId();
+  UpsertSearchAttributesDecisionStateMachine(DecisionId id, Decision decision) {
+    super(id);
+    this.decision = decision;
+  }
 
-  String getRunId();
-
-  String getWorkflowType();
-
-  String getTaskList();
-
-  Duration getExecutionStartToCloseTimeout();
-
-  ChildPolicy getChildPolicy();
-
-  SearchAttributes getSearchAttributes();
+  @Override
+  public Decision getDecision() {
+    if (state == DecisionState.CREATED) {
+      return decision;
+    }
+    return null;
+  }
 }

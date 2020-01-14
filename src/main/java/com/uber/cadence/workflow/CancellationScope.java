@@ -23,7 +23,8 @@ import java.util.concurrent.CancellationException;
 /**
  * Handle to a cancellation scope created through {@link Workflow#newCancellationScope(Runnable)} or
  * {@link Workflow#newDetachedCancellationScope(Runnable)}. Supports explicit cancelling of the code
- * a cancellation scope wraps.
+ * a cancellation scope wraps. The code in the CancellationScope has to be executed using {@link
+ * Runnable#run()} method.
  */
 public interface CancellationScope extends Runnable {
 
@@ -49,7 +50,7 @@ public interface CancellationScope extends Runnable {
   /**
    * Is scope was asked to cancel through {@link #cancel()} or by a parent scope.
    *
-   * @return
+   * @return whether request is cancelled or not.
    */
   boolean isCancelRequested();
 

@@ -228,6 +228,9 @@ class ReplayDecider implements Decider, Consumer<HistoryEvent> {
       case DecisionTaskFailed:
         context.handleDecisionTaskFailed(event);
         break;
+      case UpsertWorkflowSearchAttributes:
+        context.handleUpsertSearchAttributes(event);
+        break;
     }
   }
 

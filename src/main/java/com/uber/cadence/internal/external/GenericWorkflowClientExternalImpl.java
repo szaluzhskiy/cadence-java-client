@@ -23,6 +23,7 @@ import com.uber.cadence.QueryWorkflowRequest;
 import com.uber.cadence.QueryWorkflowResponse;
 import com.uber.cadence.RequestCancelWorkflowExecutionRequest;
 import com.uber.cadence.RetryPolicy;
+import com.uber.cadence.SearchAttributes;
 import com.uber.cadence.SignalWithStartWorkflowExecutionRequest;
 import com.uber.cadence.SignalWorkflowExecutionRequest;
 import com.uber.cadence.StartWorkflowExecutionRequest;
@@ -77,8 +78,10 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
     } finally {
       // TODO: can probably cache this
       Map<String, String> tags =
-          new ImmutableMap.Builder<String, String>(1)
+          new ImmutableMap.Builder<String, String>(3)
               .put(MetricsTag.WORKFLOW_TYPE, startParameters.getWorkflowType().getName())
+              .put(MetricsTag.TASK_LIST, startParameters.getTaskList())
+              .put(MetricsTag.DOMAIN, domain)
               .build();
       metricsScope.tagged(tags).counter(MetricsType.WORKFLOW_START_COUNTER).inc(1);
     }
@@ -117,6 +120,7 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
       request.setCronSchedule(startParameters.getCronSchedule());
     }
     request.setMemo(toMemoThrift(startParameters.getMemo()));
+    request.setSearchAttributes(toSearchAttributesThrift(startParameters.getSearchAttributes()));
 
     //        if(startParameters.getChildPolicy() != null) {
     //            request.setChildPolicy(startParameters.getChildPolicy());
@@ -154,6 +158,20 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
     return memoThrift;
   }
 
+  private SearchAttributes toSearchAttributesThrift(Map<String, byte[]> searchAttributes) {
+    if (searchAttributes == null || searchAttributes.isEmpty()) {
+      return null;
+    }
+
+    Map<String, ByteBuffer> fields = new HashMap<>();
+    for (Map.Entry<String, byte[]> item : searchAttributes.entrySet()) {
+      fields.put(item.getKey(), ByteBuffer.wrap(item.getValue()));
+    }
+    SearchAttributes searchAttrThrift = new SearchAttributes();
+    searchAttrThrift.setIndexedFields(fields);
+    return searchAttrThrift;
+  }
+
   private RetryPolicy toRetryPolicy(RetryParameters retryParameters) {
     return new RetryPolicy()
         .setBackoffCoefficient(retryParameters.getBackoffCoefficient())
@@ -186,6 +204,23 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
 
   @Override
   public WorkflowExecution signalWithStartWorkflowExecution(
+      SignalWithStartWorkflowExecutionParameters parameters) {
+    try {
+      return signalWithStartWorkflowInternal(parameters);
+    } finally {
+      Map<String, String> tags =
+          new ImmutableMap.Builder<String, String>(3)
+              .put(
+                  MetricsTag.WORKFLOW_TYPE,
+                  parameters.getStartParameters().getWorkflowType().getName())
+              .put(MetricsTag.TASK_LIST, parameters.getStartParameters().getTaskList())
+              .put(MetricsTag.DOMAIN, domain)
+              .build();
+      metricsScope.tagged(tags).counter(MetricsType.WORKFLOW_SIGNAL_WITH_START_COUNTER).inc(1);
+    }
+  }
+
+  private WorkflowExecution signalWithStartWorkflowInternal(
       SignalWithStartWorkflowExecutionParameters parameters) {
     SignalWithStartWorkflowExecutionRequest request = new SignalWithStartWorkflowExecutionRequest();
     request.setDomain(domain);
@@ -252,7 +287,7 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
   }
 
   @Override
-  public byte[] queryWorkflow(QueryWorkflowParameters queryParameters) {
+  public QueryWorkflowResponse queryWorkflow(QueryWorkflowParameters queryParameters) {
     QueryWorkflowRequest request = new QueryWorkflowRequest();
     request.setDomain(domain);
     WorkflowExecution execution = new WorkflowExecution();
@@ -262,12 +297,13 @@ public final class GenericWorkflowClientExternalImpl implements GenericWorkflowC
     query.setQueryArgs(queryParameters.getInput());
     query.setQueryType(queryParameters.getQueryType());
     request.setQuery(query);
+    request.setQueryRejectCondition(queryParameters.getQueryRejectCondition());
     try {
       QueryWorkflowResponse response =
           Retryer.retryWithResult(
               Retryer.DEFAULT_SERVICE_OPERATION_RETRY_OPTIONS,
               () -> service.QueryWorkflow(request));
-      return response.getQueryResult();
+      return response;
     } catch (TException e) {
       throw CheckedExceptionWrapper.wrap(e);
     }

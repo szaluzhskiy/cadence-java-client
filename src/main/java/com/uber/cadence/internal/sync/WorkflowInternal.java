@@ -50,6 +50,7 @@ import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
@@ -167,6 +168,10 @@ public final class WorkflowInternal {
 
   public static ActivityStub newUntypedActivityStub(ActivityOptions options) {
     return ActivityStubImpl.newInstance(options, getWorkflowInterceptor());
+  }
+
+  public static ActivityStub newUntypedLocalActivityStub(LocalActivityOptions options) {
+    return LocalActivityStubImpl.newInstance(options, getWorkflowInterceptor());
   }
 
   @SuppressWarnings("unchecked")
@@ -296,6 +301,11 @@ public final class WorkflowInternal {
     return new CancellationScopeImpl(detached, runnable);
   }
 
+  public static CancellationScope newCancellationScope(
+      boolean detached, Functions.Proc1<CancellationScope> proc) {
+    return new CancellationScopeImpl(detached, proc);
+  }
+
   public static CancellationScopeImpl currentCancellationScope() {
     return CancellationScopeImpl.current();
   }
@@ -374,5 +384,9 @@ public final class WorkflowInternal {
 
   public static <R> R getLastCompletionResult(Class<R> resultClass, Type resultType) {
     return getRootDecisionContext().getLastCompletionResult(resultClass, resultType);
+  }
+
+  public static void upsertSearchAttributes(Map<String, Object> searchAttributes) {
+    getWorkflowInterceptor().upsertSearchAttributes(searchAttributes);
   }
 }

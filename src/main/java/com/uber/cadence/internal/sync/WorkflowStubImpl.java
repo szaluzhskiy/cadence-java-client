@@ -20,6 +20,8 @@ package com.uber.cadence.internal.sync;
 import com.uber.cadence.EntityNotExistsError;
 import com.uber.cadence.InternalServiceError;
 import com.uber.cadence.QueryFailedError;
+import com.uber.cadence.QueryRejectCondition;
+import com.uber.cadence.QueryWorkflowResponse;
 import com.uber.cadence.WorkflowExecution;
 import com.uber.cadence.WorkflowExecutionAlreadyStartedError;
 import com.uber.cadence.WorkflowType;
@@ -33,7 +35,9 @@ import com.uber.cadence.client.WorkflowServiceException;
 import com.uber.cadence.client.WorkflowStub;
 import com.uber.cadence.converter.DataConverter;
 import com.uber.cadence.converter.DataConverterException;
+import com.uber.cadence.converter.JsonDataConverter;
 import com.uber.cadence.internal.common.CheckedExceptionWrapper;
+import com.uber.cadence.internal.common.QueryResponse;
 import com.uber.cadence.internal.common.SignalWithStartWorkflowExecutionParameters;
 import com.uber.cadence.internal.common.StartWorkflowExecutionParameters;
 import com.uber.cadence.internal.common.WorkflowExecutionFailedException;
@@ -140,23 +144,32 @@ class WorkflowStubImpl implements WorkflowStub {
     p.setInput(dataConverter.toData(args));
     p.setWorkflowType(new WorkflowType().setName(workflowType.get()));
     p.setMemo(convertMemoFromObjectToBytes(o.getMemo()));
+    p.setSearchAttributes(convertSearchAttributesFromObjectToBytes(o.getSearchAttributes()));
     return p;
   }
 
-  private Map<String, byte[]> convertMemoFromObjectToBytes(Map<String, Object> memoFromOption) {
-    if (memoFromOption == null) {
+  private Map<String, byte[]> convertMapFromObjectToBytes(
+      Map<String, Object> map, DataConverter dataConverter) {
+    if (map == null) {
       return null;
     }
-    Map<String, byte[]> memo = new HashMap<>();
-    for (Map.Entry<String, Object> item : memoFromOption.entrySet()) {
+    Map<String, byte[]> result = new HashMap<>();
+    for (Map.Entry<String, Object> item : map.entrySet()) {
       try {
-        memo.put(item.getKey(), dataConverter.toData(item.getValue()));
+        result.put(item.getKey(), dataConverter.toData(item.getValue()));
       } catch (DataConverterException e) {
-        throw new DataConverterException(
-            "Cannot serialize memo for key " + item.getKey(), e.getCause());
+        throw new DataConverterException("Cannot serialize key " + item.getKey(), e.getCause());
       }
     }
-    return memo;
+    return result;
+  }
+
+  private Map<String, byte[]> convertMemoFromObjectToBytes(Map<String, Object> map) {
+    return convertMapFromObjectToBytes(map, dataConverter);
+  }
+
+  private Map<String, byte[]> convertSearchAttributesFromObjectToBytes(Map<String, Object> map) {
+    return convertMapFromObjectToBytes(map, JsonDataConverter.getInstance());
   }
 
   @Override
@@ -333,14 +346,40 @@ class WorkflowStubImpl implements WorkflowStub {
 
   @Override
   public <R> R query(String queryType, Class<R> resultClass, Type resultType, Object... args) {
+    return query(queryType, resultClass, resultType, null, args).getResult();
+  }
+
+  @Override
+  public <R> QueryResponse<R> query(
+      String queryType,
+      Class<R> resultClass,
+      QueryRejectCondition queryRejectCondition,
+      Object... args) {
+    return query(queryType, resultClass, resultClass, queryRejectCondition, args);
+  }
+
+  @Override
+  public <R> QueryResponse<R> query(
+      String queryType,
+      Class<R> resultClass,
+      Type resultType,
+      QueryRejectCondition queryRejectCondition,
+      Object... args) {
     checkStarted();
     QueryWorkflowParameters p = new QueryWorkflowParameters();
     p.setInput(dataConverter.toData(args));
     p.setQueryType(queryType);
     p.setWorkflowId(execution.get().getWorkflowId());
+    p.setQueryRejectCondition(queryRejectCondition);
     try {
-      byte[] result = genericClient.queryWorkflow(p);
-      return dataConverter.fromData(result, resultClass, resultType);
+      QueryWorkflowResponse result = genericClient.queryWorkflow(p);
+      if (result.queryRejected == null) {
+        return new QueryResponse<>(
+            null, dataConverter.fromData(result.getQueryResult(), resultClass, resultType));
+      } else {
+        return new QueryResponse<>(result.getQueryRejected(), null);
+      }
+
     } catch (RuntimeException e) {
       Exception unwrapped = CheckedExceptionWrapper.unwrap(e);
       if (unwrapped instanceof EntityNotExistsError) {

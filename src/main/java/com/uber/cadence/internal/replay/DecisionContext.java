@@ -18,6 +18,7 @@
 package com.uber.cadence.internal.replay;
 
 import com.uber.cadence.ChildPolicy;
+import com.uber.cadence.SearchAttributes;
 import com.uber.cadence.WorkflowExecution;
 import com.uber.cadence.WorkflowType;
 import com.uber.cadence.converter.DataConverter;
@@ -70,6 +71,14 @@ public interface DecisionContext extends ReplayAware {
   Duration getDecisionTaskTimeout();
 
   ChildPolicy getChildPolicy();
+
+  /**
+   * Used to retrieve search attributes.
+   *
+   * @return SearchAttribute object which can be used by {@code
+   *     WorkflowUtils.getValueFromSearchAttributes} to retrieve concrete value.
+   */
+  SearchAttributes getSearchAttributes();
 
   /**
    * Used to dynamically schedule an activity for execution
@@ -179,4 +188,6 @@ public interface DecisionContext extends ReplayAware {
 
   /** @return replay safe UUID */
   UUID randomUUID();
+
+  void upsertSearchAttributes(SearchAttributes searchAttributes);
 }

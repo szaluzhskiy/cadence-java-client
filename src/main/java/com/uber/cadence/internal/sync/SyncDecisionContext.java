@@ -20,12 +20,14 @@ package com.uber.cadence.internal.sync;
 import static com.uber.cadence.internal.common.OptionsUtils.roundUpToSeconds;
 
 import com.uber.cadence.ActivityType;
+import com.uber.cadence.SearchAttributes;
 import com.uber.cadence.WorkflowExecution;
 import com.uber.cadence.WorkflowType;
 import com.uber.cadence.activity.ActivityOptions;
 import com.uber.cadence.activity.LocalActivityOptions;
 import com.uber.cadence.common.RetryOptions;
 import com.uber.cadence.converter.DataConverter;
+import com.uber.cadence.internal.common.InternalUtils;
 import com.uber.cadence.internal.common.RetryParameters;
 import com.uber.cadence.internal.replay.ActivityTaskFailedException;
 import com.uber.cadence.internal.replay.ActivityTaskTimeoutException;
@@ -418,10 +420,10 @@ final class SyncDecisionContext implements WorkflowInterceptor {
       return (CancellationException) failure;
     }
     if (failure instanceof ChildWorkflowException) {
-      throw (ChildWorkflowException) failure;
+      return (ChildWorkflowException) failure;
     }
     if (!(failure instanceof ChildWorkflowTaskFailedException)) {
-      throw new IllegalArgumentException("Unexpected exception type: ", failure);
+      return new IllegalArgumentException("Unexpected exception type: ", failure);
     }
     ChildWorkflowTaskFailedException taskFailed = (ChildWorkflowTaskFailedException) failure;
     String causeClassName = taskFailed.getReason();
@@ -672,7 +674,7 @@ final class SyncDecisionContext implements WorkflowInterceptor {
     }
 
     if (!(failure instanceof SignalExternalWorkflowException)) {
-      throw new IllegalArgumentException("Unexpected exception type: ", failure);
+      return new IllegalArgumentException("Unexpected exception type: ", failure);
     }
     return (SignalExternalWorkflowException) failure;
   }
@@ -692,5 +694,15 @@ final class SyncDecisionContext implements WorkflowInterceptor {
 
     DataConverter dataConverter = getDataConverter();
     return dataConverter.fromData(lastCompletionResult, resultClass, resultType);
+  }
+
+  @Override
+  public void upsertSearchAttributes(Map<String, Object> searchAttributes) {
+    if (searchAttributes.isEmpty()) {
+      throw new IllegalArgumentException("Empty search attributes");
+    }
+
+    SearchAttributes attr = InternalUtils.convertMapToSearchAttributes(searchAttributes);
+    context.upsertSearchAttributes(attr);
   }
 }

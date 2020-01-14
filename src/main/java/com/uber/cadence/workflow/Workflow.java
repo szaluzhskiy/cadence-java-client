@@ -24,12 +24,10 @@ import com.uber.cadence.common.RetryOptions;
 import com.uber.cadence.internal.sync.WorkflowInternal;
 import com.uber.cadence.worker.WorkerOptions;
 import com.uber.cadence.workflow.Functions.Func;
-import com.uber.cadence.workflow.Functions.Func1;
-import com.uber.cadence.workflow.Functions.Func2;
-import com.uber.cadence.workflow.Functions.Proc;
 import com.uber.m3.tally.Scope;
 import java.lang.reflect.Type;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
@@ -99,7 +97,7 @@ import org.slf4j.Logger;
  * <p>Calling a method on this interface invokes an activity that implements this method. An
  * activity invocation synchronously blocks until the activity completes, fails, or times out. Even
  * if activity execution takes a few months, the workflow code still sees it as a single synchronous
- * invocation. Isn't it great? I doesn't matter what happens to the processes that host the
+ * invocation. Isn't it great? It doesn't matter what happens to the processes that host the
  * workflow. The business logic code just sees a single method call.
  *
  * <pre><code>
@@ -155,9 +153,9 @@ import org.slf4j.Logger;
  * methods allow you to invoke any activity asynchronously. The call returns a {@link Promise}
  * result immediately. {@link Promise} is similar to both {@link java.util.concurrent.Future} and
  * {@link java.util.concurrent.CompletionStage}. The {@link Promise#get()} blocks until a result is
- * available. It also exposes the {@link Promise#thenApply(Func1)} and {@link Promise#handle(Func2)}
- * methods. See the {@link Promise} documentation for technical details about differences with
- * {@link java.util.concurrent.Future}.
+ * available. It also exposes the {@link Promise#thenApply(Functions.Func1)} and {@link
+ * Promise#handle(Functions.Func2)} methods. See the {@link Promise} documentation for technical
+ * details about differences with {@link java.util.concurrent.Future}.
  *
  * <p>To convert a synchronous call
  *
@@ -165,8 +163,8 @@ import org.slf4j.Logger;
  * String localName = activities.download(sourceBucket, sourceFile);
  * </code></pre>
  *
- * to asynchronous style, the method reference is passed to {@link Async#function(Func)} or {@link
- * Async#procedure(Proc)} followed by activity arguments:
+ * to asynchronous style, the method reference is passed to {@link Async#function(Functions.Func)}
+ * or {@link Async#procedure(Functions.Proc)} followed by activity arguments:
  *
  * <pre><code>
  * Promise<String> localNamePromise = Async.function(activities::download, sourceBucket, sourceFile);
@@ -225,7 +223,8 @@ import org.slf4j.Logger;
  *                         activities.deleteLocalFile(processedName);
  *                     }
  *                 }
- *             });
+ *             }
+ *          ).run();
  *     }
  * }
  * }</pre>
@@ -241,13 +240,14 @@ import org.slf4j.Logger;
  *
  * <p>The first call to the child workflow stub must always be to a method annotated with
  * {@literal @}{@link WorkflowMethod}. Similarly to activities, a call can be synchronous or
- * asynchronous using {@link Async#function(Func)} or {@link Async#procedure(Proc)}. The synchronous
- * call blocks until a child workflow completes. The asynchronous call returns a {@link Promise}
- * that can be used to wait for the completion. After an async call returns the stub, it can be used
- * to send signals to the child by calling methods annotated with {@literal @}{@link SignalMethod}.
- * Querying a child workflow by calling methods annotated with {@literal @}{@link QueryMethod} from
- * within workflow code is not supported. However, queries can be done from activities using the
- * {@link com.uber.cadence.client.WorkflowClient} provided stub.
+ * asynchronous using {@link Async#function(Functions.Func)} or {@link
+ * Async#procedure(Functions.Proc)}. The synchronous call blocks until a child workflow completes.
+ * The asynchronous call returns a {@link Promise} that can be used to wait for the completion.
+ * After an async call returns the stub, it can be used to send signals to the child by calling
+ * methods annotated with {@literal @}{@link SignalMethod}. Querying a child workflow by calling
+ * methods annotated with {@literal @}{@link QueryMethod} from within workflow code is not
+ * supported. However, queries can be done from activities using the {@link
+ * com.uber.cadence.client.WorkflowClient} provided stub.
  *
  * <pre><code>
  * public interface GreetingChild {
@@ -336,8 +336,8 @@ import org.slf4j.Logger;
  *       for this.
  *   <li>Only use {@link #currentTimeMillis()} to get the current time inside a workflow.
  *   <li>Do not use native Java {@link Thread} or any other multi-threaded classes like {@link
- *       java.util.concurrent.ThreadPoolExecutor}. Use {@link Async#function(Func)} or {@link
- *       Async#procedure(Proc)} to execute code asynchronously.
+ *       java.util.concurrent.ThreadPoolExecutor}. Use {@link Async#function(Functions.Func)} or
+ *       {@link Async#procedure(Functions.Proc)} to execute code asynchronously.
  *   <li>Don't use any synchronization, locks, and other standard Java blocking concurrency-related
  *       classes besides those provided by the Workflow class. There is no need in explicit
  *       synchronization because multi-threaded code inside a workflow is executed one thread at a
@@ -388,7 +388,7 @@ public final class Workflow {
   }
 
   /**
-   * Creates client stub to activities that implement given interface.
+   * Creates non typed client stub to activities. Allows executing activities by their string name.
    *
    * @param options specify the activity invocation parameters.
    */
@@ -419,6 +419,16 @@ public final class Workflow {
    */
   public static <T> T newLocalActivityStub(Class<T> activityInterface) {
     return WorkflowInternal.newLocalActivityStub(activityInterface, null);
+  }
+
+  /**
+   * Creates non typed client stub to local activities. Allows executing activities by their string
+   * name.
+   *
+   * @param options specify the local activity invocation parameters.
+   */
+  public static ActivityStub newUntypedLocalActivityStub(LocalActivityOptions options) {
+    return WorkflowInternal.newUntypedLocalActivityStub(options);
   }
 
   /**
@@ -581,6 +591,21 @@ public final class Workflow {
    * blocking after the current scope is cancelled use a scope created through {@link
    * #newDetachedCancellationScope(Runnable)}.
    *
+   * <p>Example of running activities in parallel and cancelling them after a specified timeout.
+   *
+   * <pre><code>
+   *     List<Promise<String>> results = new ArrayList<>();
+   *     CancellationScope scope = Workflow.newDetachedCancellationScope(() -> {
+   *        Async.function(activities::a1);
+   *        Async.function(activities::a2);
+   *     });
+   *     scope.run(); // returns immediately as the activities are invoked asynchronously
+   *     Workflow.sleep(Duration.ofHours(1));
+   *     // Cancels any activity in the scope that is still running
+   *     scope.cancel("one hour passed");
+   *
+   * </code></pre>
+   *
    * @param runnable parameter to wrap in a cancellation scope.
    * @return wrapped parameter.
    */
@@ -589,7 +614,52 @@ public final class Workflow {
   }
 
   /**
-   * Creates a CancellationScope that is not linked to a parent scope.
+   * Wraps a procedure in a CancellationScope. The procedure receives the wrapping CancellationScope
+   * as a parameter. Useful when cancellation is requested from within the wrapped code. The
+   * following example cancels the sibling activity on any failure.
+   *
+   * <pre><code>
+   *               Workflow.newCancellationScope(
+   *                   (scope) -> {
+   *                     Promise<Void> p1 = Async.proc(activities::a1).exceptionally(ex->
+   *                        {
+   *                           scope.cancel("a1 failed");
+   *                           return null;
+   *                        });
+   *
+   *                     Promise<Void> p2 = Async.proc(activities::a2).exceptionally(ex->
+   *                        {
+   *                           scope.cancel("a2 failed");
+   *                           return null;
+   *                        });
+   *                     Promise.allOf(p1, p2).get();
+   *                   })
+   *               .run();
+   * </code></pre>
+   *
+   * @param proc code to wrap in the cancellation scope
+   * @return wrapped proc
+   */
+  public static CancellationScope newCancellationScope(Functions.Proc1<CancellationScope> proc) {
+    return WorkflowInternal.newCancellationScope(false, proc);
+  }
+
+  /**
+   * Creates a CancellationScope that is not linked to a parent scope. {@link
+   * CancellationScope#run()} must be called to execute the code the scope wraps. The detached scope
+   * is needed to execute cleanup code after a workflow is cancelled which cancels the root scope
+   * that wraps the @WorkflowMethod invocation. Here is an example usage:
+   *
+   * <pre><code>
+   *  try {
+   *     // workflow logic
+   *  } catch (CancellationException e) {
+   *     CancellationScope detached = Workflow.newDetachedCancellationScope(() -> {
+   *         // cleanup logic
+   *     });
+   *     detached.run();
+   *  }
+   * </code></pre>
    *
    * @param runnable parameter to wrap in a cancellation scope.
    * @return wrapped parameter.
@@ -793,7 +863,7 @@ public final class Workflow {
    * failure. The decision task after timeout is rescheduled and re-executed giving SideEffect
    * another chance to succeed.
    *
-   * <p>Caution: do not use sideEffect function to modify any workflow sate. Only use the
+   * <p>Caution: do not use sideEffect function to modify any workflow state. Only use the
    * SideEffect's return value. For example this code is BROKEN:
    *
    * <pre><code>
@@ -809,7 +879,7 @@ public final class Workflow {
    *  } else {
    *         ....
    *  }
-   *  </code></pre>
+   * </code></pre>
    *
    * On replay the provided function is not executed, the random will always be 0, and the workflow
    * could takes a different path breaking the determinism.
@@ -824,7 +894,7 @@ public final class Workflow {
    *  } else {
    *         ....
    *  }
-   *  </code></pre>
+   * </code></pre>
    *
    * If function throws any exception it is not delivered to the workflow code. It is wrapped in
    * {@link Error} causing failure of the current decision.
@@ -832,7 +902,7 @@ public final class Workflow {
    * @param resultClass type of the side effect
    * @param func function that returns side effect value
    * @return value of the side effect
-   * @see #mutableSideEffect(String, Class, BiPredicate, Func)
+   * @see #mutableSideEffect(String, Class, BiPredicate, Functions.Func)
    */
   public static <R> R sideEffect(Class<R> resultClass, Func<R> func) {
     return WorkflowInternal.sideEffect(resultClass, resultClass, func);
@@ -847,7 +917,7 @@ public final class Workflow {
    * failure. The decision task after timeout is rescheduled and re-executed giving SideEffect
    * another chance to succeed.
    *
-   * <p>Caution: do not use sideEffect function to modify any workflow sate. Only use the
+   * <p>Caution: do not use sideEffect function to modify any workflow state. Only use the
    * SideEffect's return value. For example this code is BROKEN:
    *
    * <pre><code>
@@ -863,7 +933,7 @@ public final class Workflow {
    *  } else {
    *         ....
    *  }
-   *  </code></pre>
+   * </code></pre>
    *
    * On replay the provided function is not executed, the random will always be 0, and the workflow
    * could takes a different path breaking the determinism.
@@ -878,7 +948,7 @@ public final class Workflow {
    *  } else {
    *         ....
    *  }
-   *  </code></pre>
+   * </code></pre>
    *
    * If function throws any exception it is not delivered to the workflow code. It is wrapped in
    * {@link Error} causing failure of the current decision.
@@ -887,21 +957,22 @@ public final class Workflow {
    * @param resultType type of the side effect. Differs from resultClass for generic types.
    * @param func function that returns side effect value
    * @return value of the side effect
-   * @see #mutableSideEffect(String, Class, BiPredicate, Func)
+   * @see #mutableSideEffect(String, Class, BiPredicate, Functions.Func)
    */
   public static <R> R sideEffect(Class<R> resultClass, Type resultType, Func<R> func) {
     return WorkflowInternal.sideEffect(resultClass, resultType, func);
   }
 
   /**
-   * {@code mutableSideEffect} is similar to {@link #sideEffect(Class, Func)} in allowing calls of
-   * non-deterministic functions from workflow code.
+   * {@code mutableSideEffect} is similar to {@link #sideEffect(Class, Functions.Func)} in allowing
+   * calls of non-deterministic functions from workflow code.
    *
-   * <p>The difference between {@code mutableSideEffect} and {@link #sideEffect(Class, Func)} is
-   * that every new {@code sideEffect} call in non-replay mode results in a new marker event
-   * recorded into the history. However, {@code mutableSideEffect} only records a new marker if a
-   * value has changed. During the replay, {@code mutableSideEffect} will not execute the function
-   * again, but it will return the exact same value as it was returning during the non-replay run.
+   * <p>The difference between {@code mutableSideEffect} and {@link #sideEffect(Class,
+   * Functions.Func)} is that every new {@code sideEffect} call in non-replay mode results in a new
+   * marker event recorded into the history. However, {@code mutableSideEffect} only records a new
+   * marker if a value has changed. During the replay, {@code mutableSideEffect} will not execute
+   * the function again, but it will return the exact same value as it was returning during the
+   * non-replay run.
    *
    * <p>One good use case of {@code mutableSideEffect} is to access a dynamically changing config
    * without breaking determinism. Even if called very frequently the config value is recorded only
@@ -919,7 +990,7 @@ public final class Workflow {
    *     for the first value.
    * @param resultClass class of the side effect
    * @param func function that produces a value. This function can contain non deterministic code.
-   * @see #sideEffect(Class, Func)
+   * @see #sideEffect(Class, Functions.Func)
    */
   public static <R> R mutableSideEffect(
       String id, Class<R> resultClass, BiPredicate<R, R> updated, Func<R> func) {
@@ -927,14 +998,15 @@ public final class Workflow {
   }
 
   /**
-   * {@code mutableSideEffect} is similar to {@link #sideEffect(Class, Func)} in allowing calls of
-   * non-deterministic functions from workflow code.
+   * {@code mutableSideEffect} is similar to {@link #sideEffect(Class, Functions.Func)} in allowing
+   * calls of non-deterministic functions from workflow code.
    *
-   * <p>The difference between {@code mutableSideEffect} and {@link #sideEffect(Class, Func)} is
-   * that every new {@code sideEffect} call in non-replay mode results in a new marker event
-   * recorded into the history. However, {@code mutableSideEffect} only records a new marker if a
-   * value has changed. During the replay, {@code mutableSideEffect} will not execute the function
-   * again, but it will return the exact same value as it was returning during the non-replay run.
+   * <p>The difference between {@code mutableSideEffect} and {@link #sideEffect(Class,
+   * Functions.Func)} is that every new {@code sideEffect} call in non-replay mode results in a new
+   * marker event recorded into the history. However, {@code mutableSideEffect} only records a new
+   * marker if a value has changed. During the replay, {@code mutableSideEffect} will not execute
+   * the function again, but it will return the exact same value as it was returning during the
+   * non-replay run.
    *
    * <p>One good use case of {@code mutableSideEffect} is to access a dynamically changing config
    * without breaking determinism. Even if called very frequently the config value is recorded only
@@ -953,7 +1025,7 @@ public final class Workflow {
    * @param resultClass class of the side effect
    * @param resultType type of the side effect. Differs from resultClass for generic types.
    * @param func function that produces a value. This function can contain non deterministic code.
-   * @see #sideEffect(Class, Func)
+   * @see #sideEffect(Class, Functions.Func)
    */
   public static <R> R mutableSideEffect(
       String id, Class<R> resultClass, Type resultType, BiPredicate<R, R> updated, Func<R> func) {
@@ -1062,8 +1134,8 @@ public final class Workflow {
   }
 
   /**
-   * Get logger to use inside workflow. Logs in replay mode are omitted unless {@param
-   * enableLoggingInReplay} is set to true in {@link WorkerOptions} when a worker starts up.
+   * Get logger to use inside workflow. Logs in replay mode are omitted unless enableLoggingInReplay
+   * is set to true in {@link WorkerOptions} when a worker starts up.
    *
    * @param clazz class name to appear in logging.
    * @return logger to use in workflow logic.
@@ -1073,8 +1145,8 @@ public final class Workflow {
   }
 
   /**
-   * Get logger to use inside workflow. Logs in replay mode are omitted unless {@param
-   * enableLoggingInReplay} is set to true in {@link WorkerOptions} when a worker starts up.
+   * Get logger to use inside workflow. Logs in replay mode are omitted unless enableLoggingInReplay
+   * is set to true in {@link WorkerOptions} when a worker starts up.
    *
    * @param name name to appear in logging.
    * @return logger to use in workflow logic.
@@ -1109,6 +1181,39 @@ public final class Workflow {
    */
   public static <R> R getLastCompletionResult(Class<R> resultClass, Type resultType) {
     return WorkflowInternal.getLastCompletionResult(resultClass, resultType);
+  }
+
+  /**
+   * {@code upsertSearchAttributes} is used to add or update workflow search attributes. The search
+   * attributes can be used in query of List/Scan/Count workflow APIs. The key and value type must
+   * be registered on cadence server side; The value has to be Json serializable.
+   * UpsertSearchAttributes will merge attributes to existing map in workflow, for example workflow
+   * code:
+   *
+   * <pre><code>
+   *     Map<String, Object> attr1 = new HashMap<>();
+   *     attr1.put("CustomIntField", 1);
+   *     attr1.put("CustomBoolField", true);
+   *     Workflow.upsertSearchAttributes(attr1);
+   *
+   *     Map<String, Object> attr2 = new HashMap<>();
+   *     attr2.put("CustomIntField", 2);
+   *     attr2.put("CustomKeywordField", "Seattle");
+   *     Workflow.upsertSearchAttributes(attr2);
+   * </pre></code> will eventually have search attributes as:
+   *
+   * <pre><code>
+   *     {
+   *       "CustomIntField": 2,
+   *       "CustomBoolField": true,
+   *       "CustomKeywordField": "Seattle",
+   *     }
+   * </pre></code>
+   *
+   * @param searchAttributes map of String to Object value that can be used to search in list APIs
+   */
+  public static void upsertSearchAttributes(Map<String, Object> searchAttributes) {
+    WorkflowInternal.upsertSearchAttributes(searchAttributes);
   }
 
   /** Prohibit instantiation. */

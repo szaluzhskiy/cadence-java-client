@@ -19,7 +19,17 @@ package com.uber.cadence.internal.replay;
 
 import static com.uber.cadence.internal.common.InternalUtils.createStickyTaskList;
 
-import com.uber.cadence.*;
+import com.uber.cadence.GetWorkflowExecutionHistoryRequest;
+import com.uber.cadence.GetWorkflowExecutionHistoryResponse;
+import com.uber.cadence.HistoryEvent;
+import com.uber.cadence.PollForDecisionTaskResponse;
+import com.uber.cadence.QueryTaskCompletedType;
+import com.uber.cadence.RespondDecisionTaskCompletedRequest;
+import com.uber.cadence.RespondDecisionTaskFailedRequest;
+import com.uber.cadence.RespondQueryTaskCompletedRequest;
+import com.uber.cadence.StickyExecutionAttributes;
+import com.uber.cadence.WorkflowExecution;
+import com.uber.cadence.WorkflowType;
 import com.uber.cadence.internal.common.WorkflowExecutionUtils;
 import com.uber.cadence.internal.metrics.MetricsType;
 import com.uber.cadence.internal.worker.DecisionTaskHandler;
@@ -168,6 +178,13 @@ public final class ReplayDecisionTaskHandler implements DecisionTaskHandler {
       }
       return createCompletedRequest(decisionTask, result);
     } catch (Throwable e) {
+      // Note here that the decider might not be in the cache, even sticky is on. In that case we
+      // need to close the decider explicitly.
+      // For items in the cache, invalidation callback will try to close again, which should be ok.
+      if (decider != null) {
+        decider.close();
+      }
+
       if (stickyTaskListName != null) {
         cache.invalidate(decisionTask.getWorkflowExecution().getRunId());
       }

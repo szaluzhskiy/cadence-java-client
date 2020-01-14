@@ -1,3 +1,20 @@
+/*
+ *  Copyright 2012-2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ *  Modifications copyright (C) 2017 Uber Technologies, Inc.
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"). You may not
+ *  use this file except in compliance with the License. A copy of the License is
+ *  located at
+ *
+ *  http://aws.amazon.com/apache2.0
+ *
+ *  or in the "license" file accompanying this file. This file is distributed on
+ *  an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ *  express or implied. See the License for the specific language governing
+ *  permissions and limitations under the License.
+ */
+
 package com.uber.cadence.reporter;
 
 import com.uber.m3.tally.Buckets;
@@ -7,35 +24,11 @@ import com.uber.m3.tally.StatsReporter;
 import com.uber.m3.util.Duration;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Tag;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class CadenceClientStatsReporter implements StatsReporter {
-
-  private static final Logger log = LoggerFactory.getLogger(CadenceClientStatsReporter.class);
-  private final List<String> metrics;
-
-  public CadenceClientStatsReporter() {
-    this.metrics = Arrays.asList(
-        "cadence-workflow-endtoend-latency",
-        "cadence-decision-execution-latency",
-        "cadence-decision-response-latency",
-        "cadence-workflow-start",
-        "cadence-workflow-completed",
-        "cadence-workflow-canceled",
-        "cadence-workflow-failed",
-        "cadence-workflow-continue-as-new"
-    );
-  }
-
-  public CadenceClientStatsReporter(List<String> metrics) {
-    this.metrics = metrics;
-  }
 
   @Override
   public Capabilities capabilities() {
@@ -54,10 +47,7 @@ public class CadenceClientStatsReporter implements StatsReporter {
 
   @Override
   public void reportCounter(String name, Map<String, String> tags, long value) {
-    log.trace("CounterImpl {}: {} {}", name, tags, value);
-    if (shouldReport(name)) {
-      Metrics.counter(name, getTags(tags)).increment(value);
-    }
+    Metrics.counter(name, getTags(tags)).increment(value);
   }
 
   @Override
@@ -67,10 +57,7 @@ public class CadenceClientStatsReporter implements StatsReporter {
 
   @Override
   public void reportTimer(String name, Map<String, String> tags, Duration interval) {
-    log.trace("TimerImpl {}: {} {}", name, tags, interval.getSeconds());
-    if (shouldReport(name)) {
-      Metrics.timer(name, getTags(tags)).record(interval.getNanos(), TimeUnit.NANOSECONDS);
-    }
+    Metrics.timer(name, getTags(tags)).record(interval.getNanos(), TimeUnit.NANOSECONDS);
   }
 
   @Override
@@ -83,11 +70,6 @@ public class CadenceClientStatsReporter implements StatsReporter {
   public void reportHistogramDurationSamples(String name, Map<String, String> tags, Buckets buckets,
       Duration bucketLowerBound, Duration bucketUpperBound, long samples) {
     // NOOP
-  }
-
-  private boolean shouldReport(String name) {
-    return metrics.stream()
-        .anyMatch(name::equals);
   }
 
   private Iterable<Tag> getTags(Map<String, String> tags) {
